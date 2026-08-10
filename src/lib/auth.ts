@@ -38,28 +38,34 @@ export async function getSession() {
 
   if (!sessionId) return null;
 
-  const session = await db
-    .select()
-    .from(sessions)
-    .where(
-      and(
-        eq(sessions.id, sessionId),
-        gt(sessions.expiresAt, new Date())
+  try {
+    const session = await db
+      .select()
+      .from(sessions)
+      .where(
+        and(
+          eq(sessions.id, sessionId),
+          gt(sessions.expiresAt, new Date())
+        )
       )
-    )
-    .limit(1);
+      .limit(1);
 
-  if (!session.length) return null;
+    if (!session.length) return null;
 
-  const user = await db
-    .select()
-    .from(users)
-    .where(eq(users.id, session[0].userId))
-    .limit(1);
+    const user = await db
+      .select()
+      .from(users)
+      .where(eq(users.id, session[0].userId))
+      .limit(1);
 
-  if (!user.length) return null;
+    if (!user.length) return null;
 
-  return { session: session[0], user: user[0] };
+    return { session: session[0], user: user[0] };
+  } catch (err) {
+    // Schema might be stale on cold start - swallow, next request retries
+    console.warn("[getSession] query failed:", (err as Error).message.split("\n")[0]);
+    return null;
+  }
 }
 
 export async function deleteSession(sessionId: string) {

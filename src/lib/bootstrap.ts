@@ -12,7 +12,7 @@ import { users, nodes, ports } from "./../db/schema";
 import { eq, count } from "drizzle-orm";
 import { hashPassword } from "./auth";
 import { v4 as uuidv4 } from "uuid";
-import { ensureMigrated } from "./migrate";
+import { ensureMigrated, withSchemaSafety } from "./migrate";
 
 type G = typeof globalThis & { __birdserverBootstrapped?: boolean; __birdserverBootstrapPromise?: Promise<void> };
 const g = globalThis as G;
@@ -23,7 +23,9 @@ async function doBootstrap(): Promise<void> {
     await ensureMigrated();
 
     // 1. Admin
-    const [{ value: userCount }] = await db.select({ value: count() }).from(users);
+    const [{ value: userCount }] = await withSchemaSafety(() =>
+      db.select({ value: count() }).from(users)
+    );
     if (userCount === 0) {
       const passwordHash = await hashPassword("admin00");
       await db.insert(users).values({

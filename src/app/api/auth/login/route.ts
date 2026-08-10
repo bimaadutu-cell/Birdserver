@@ -4,11 +4,15 @@ import { users, auditLogs } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { verifyPassword, createSession } from "@/lib/auth";
 import { ensureBootstrapped } from "@/lib/bootstrap";
+import { ensureMigrated, withSchemaSafety } from "@/lib/migrate";
 import { cookies } from "next/headers";
 
 export async function POST(req: NextRequest) {
   try {
+    // Guarantee schema + admin user exist BEFORE any query
+    await ensureMigrated();
     await ensureBootstrapped();
+
     const body = await req.json();
     const { username, password } = body;
 
@@ -19,11 +23,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const userResult = await db
-      .select()
-      .from(users)
-      .where(eq(users.username, username))
-      .limit(1);
+    // Wrap the query so if the schema is still stale we auto-migrate + retry
+    const userResult = await withSchemaSafety(() =>
+      db.select().from(users).where(eq(users.username, username)).limit(1)
+    );
 
     if (!userResult.length) {
       return NextResponse.json(
