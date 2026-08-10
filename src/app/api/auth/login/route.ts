@@ -88,8 +88,9 @@ export async function POST(req: NextRequest) {
     });
   } catch (err) {
     console.error("Login error:", err);
+    const msg = (err as Error)?.message || "unknown";
     return NextResponse.json(
-      { success: false, error: { code: "SERVER_ERROR", message: "An internal error occurred." } },
+      { success: false, error: { code: "SERVER_ERROR", message: `Login failed: ${msg.substring(0, 200)}` } },
       { status: 500 }
     );
   }
