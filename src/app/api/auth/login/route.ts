@@ -13,8 +13,9 @@ export async function POST(req: NextRequest) {
     await ensureMigrated();
     await ensureBootstrapped();
 
-    const body = await req.json();
-    const { username, password } = body;
+    const body = await req.json().catch(() => null);
+    const username = typeof body?.username === "string" ? body.username.trim() : "";
+    const password = typeof body?.password === "string" ? body.password : "";
 
     if (!username || !password) {
       return NextResponse.json(
@@ -90,10 +91,23 @@ export async function POST(req: NextRequest) {
       },
     });
   } catch (err) {
-    console.error("Login error:", err);
-    const msg = (err as Error)?.message || "unknown";
+    // Never expose raw PostgreSQL/Drizzle SQL to the browser.
+    console.error("[Login] failed:", err);
+
+    const message = err instanceof Error ? err.message : "";
+    const databaseProblem =
+      /DATABASE_URL|postgres|database|relation|column|schema|connect|ECONNREFUSED|ENOTFOUND/i.test(message);
+
     return NextResponse.json(
-      { success: false, error: { code: "SERVER_ERROR", message: `Login failed: ${msg.substring(0, 200)}` } },
+      {
+        success: false,
+        error: {
+          code: databaseProblem ? "DATABASE_NOT_READY" : "LOGIN_FAILED",
+          message: databaseProblem
+            ? "Database belum siap. Pastikan PostgreSQL Railway terhubung dan DATABASE_URL tersedia, lalu tunggu deployment selesai."
+            : "Login gagal karena kesalahan server. Silakan coba lagi.",
+        },
+      },
       { status: 500 }
     );
   }

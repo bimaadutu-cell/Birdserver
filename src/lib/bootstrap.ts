@@ -1,121 +1,127 @@
 /**
- * Auto-bootstrap: runs on cold-start and ensures the panel has
- *   1. Admin user (admin/admin00)
- *   2. At least one node registered (so servers can be provisioned)
- *   3. A pool of allocatable ports for that node
- *
- * Safe to call on every request  it short-circuits after the first success.
+ * Makes sure a fresh/legacy Railway database always has the minimum
+ * BirdServer records required to use the panel.
  */
-
-import { db } from "./../db";
-import { users, nodes, ports } from "./../db/schema";
-import { eq, count } from "drizzle-orm";
+import { db } from "@/db";
+import { users, nodes, ports } from "@/db/schema";
+import { count, eq } from "drizzle-orm";
 import { hashPassword } from "./auth";
 import { v4 as uuidv4 } from "uuid";
-import { ensureMigrated, withSchemaSafety } from "./migrate";
+import { ensureMigrated } from "./migrate";
+import os from "os";
 
-type G = typeof globalThis & { __birdserverBootstrapped?: boolean; __birdserverBootstrapPromise?: Promise<void> };
-const g = globalThis as G;
+type GlobalState = typeof globalThis & {
+  __birdserverBootstrapped?: boolean;
+  __birdserverBootstrapPromise?: Promise<void>;
+};
+const g = globalThis as GlobalState;
 
 async function doBootstrap(): Promise<void> {
-  try {
-    // 0. Make sure the schema is present (idempotent DDL)
-    await ensureMigrated();
+  await ensureMigrated();
 
-    // 1. Admin
-    const [{ value: userCount }] = await withSchemaSafety(() =>
-      db.select({ value: count() }).from(users)
+  const adminUsername = process.env.BIRDSERVER_ADMIN_USERNAME || "admin";
+  const adminPassword = process.env.BIRDSERVER_ADMIN_PASSWORD || "admin00";
+  const adminEmail = process.env.BIRDSERVER_ADMIN_EMAIL || "admin@birdserver.local";
+
+  // IMPORTANT: the old code only created an admin when users.count() === 0.
+  // If Railway already contained a normal user, admin could never be created.
+  const existingAdmin = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(eq(users.username, adminUsername))
+    .limit(1);
+
+  if (existingAdmin.length === 0) {
+    await db.insert(users).values({
+      id: uuidv4(),
+      username: adminUsername,
+      email: adminEmail,
+      passwordHash: await hashPassword(adminPassword),
+      role: "ADMIN",
+      firstName: "BirdServer",
+      lastName: "Admin",
+      suspended: false,
+    });
+    console.log(`[Bootstrap] Created admin account: ${adminUsername}`);
+  }
+
+  // Keep the node layer usable on a new deployment.
+  const [{ value: nodeCount }] = await db.select({ value: count() }).from(nodes);
+  let nodeId: string | undefined;
+
+  if (nodeCount === 0) {
+    nodeId = uuidv4();
+
+    const fqdn =
+      process.env.BIRDSERVER_NODE_FQDN ||
+      process.env.RAILWAY_PUBLIC_DOMAIN ||
+      process.env.RENDER_EXTERNAL_HOSTNAME ||
+      process.env.VERCEL_URL ||
+      "localhost";
+
+    const platform =
+      process.env.RAILWAY_PROJECT_ID || process.env.RAILWAY_ENVIRONMENT_ID
+        ? "railway"
+        : process.env.VERCEL
+          ? "vercel"
+          : process.env.RENDER
+            ? "render"
+            : "local";
+
+    const totalRamMb = Number(
+      process.env.BIRDSERVER_NODE_RAM_MB || Math.floor(os.totalmem() / 1024 / 1024)
     );
-    if (userCount === 0) {
-      const passwordHash = await hashPassword("admin00");
-      await db.insert(users).values({
-        id: uuidv4(),
-        username: "admin",
-        email: "admin@birdserver.local",
-        passwordHash,
-        role: "ADMIN",
-        firstName: "BirdServer",
-        lastName: "Admin",
-      });
-      console.log("[Bootstrap] Created default admin user (admin/admin00)");
-    }
+    const totalCpuPercent = Number(
+      process.env.BIRDSERVER_NODE_CPU || os.cpus().length * 100
+    );
+    const totalStorageMb = Number(
+      process.env.BIRDSERVER_NODE_STORAGE_MB || 102400
+    );
 
-    // 2. At least one node
-    const [{ value: nodeCount }] = await db.select({ value: count() }).from(nodes);
-    let defaultNodeId: string | null = null;
-    if (nodeCount === 0) {
-      defaultNodeId = uuidv4();
-      // Detect deployment platform for FQDN
-      const fqdn =
-        process.env.BIRDSERVER_NODE_FQDN ||
-        process.env.RAILWAY_PUBLIC_DOMAIN ||
-        process.env.RENDER_EXTERNAL_HOSTNAME ||
-        process.env.FLY_APP_NAME ||
-        (process.env.VERCEL_URL ? process.env.VERCEL_URL : null) ||
-        "localhost";
-      const platform =
-        process.env.RAILWAY_PROJECT_ID ? "railway" :
-        process.env.VERCEL ? "vercel" :
-        process.env.RENDER ? "render" :
-        process.env.FLY_APP_NAME ? "fly" :
-        "local";
-      // Auto-detect resource envelope from OS
-      const os = await import("os");
-      const totalRamMb = Number(process.env.BIRDSERVER_NODE_RAM_MB || Math.floor(os.totalmem() / 1024 / 1024));
-      const cpuCount = os.cpus().length;
-      const totalCpuPercent = Number(process.env.BIRDSERVER_NODE_CPU || cpuCount * 100);
-      const totalStorageMb = Number(process.env.BIRDSERVER_NODE_STORAGE_MB || 102400);
+    await db.insert(nodes).values({
+      id: nodeId,
+      name: `Node-01 (${platform})`,
+      description: `Auto-provisioned on ${platform}`,
+      fqdn,
+      port: 8080,
+      status: "ONLINE",
+      totalRamMb,
+      totalCpuPercent,
+      totalStorageMb,
+    });
 
-      await db.insert(nodes).values({
-        id: defaultNodeId,
-        name: `Node-01 (${platform})`,
-        description: `Auto-provisioned on ${platform} - ${cpuCount} CPU / ${(totalRamMb / 1024).toFixed(1)} GB RAM`,
-        fqdn,
-        port: 8080,
-        status: "ONLINE",
-        totalRamMb,
-        totalCpuPercent,
-        totalStorageMb,
-      });
-      console.log(`[Bootstrap] Created node: ${platform} @ ${fqdn} (${cpuCount} CPU, ${totalRamMb}MB RAM)`);
-    }
+    console.log(`[Bootstrap] Created ${platform} node.`);
+  } else {
+    const first = await db.select({ id: nodes.id }).from(nodes).limit(1);
+    nodeId = first[0]?.id;
+  }
 
-    // 3. Ports (only if we just created the node and there are none)
-    const [{ value: portCount }] = await db.select({ value: count() }).from(ports);
-    if (portCount === 0) {
-      const targetNodeId = defaultNodeId
-        || (await db.select({ id: nodes.id }).from(nodes).limit(1))[0]?.id;
-      if (targetNodeId) {
-        const portValues: { nodeId: string; port: number; allocated: boolean }[] = [];
-        for (let p = 25565; p <= 25620; p++) {
-          portValues.push({ nodeId: targetNodeId, port: p, allocated: false });
-        }
-        await db.insert(ports).values(portValues);
-        console.log(`[Bootstrap] Allocated ports 25565-25620`);
-      }
+  const [{ value: portCount }] = await db.select({ value: count() }).from(ports);
+  if (portCount === 0 && nodeId) {
+    const values = [];
+    for (let port = 25565; port <= 25620; port++) {
+      values.push({ nodeId, port, allocated: false });
     }
-  } catch (err) {
-    console.error("[Bootstrap] Failed:", (err as Error).message);
-    // reset so we can retry next request
-    g.__birdserverBootstrapped = false;
-    g.__birdserverBootstrapPromise = undefined;
-    throw err;
+    await db.insert(ports).values(values);
+    console.log("[Bootstrap] Created ports 25565-25620.");
   }
 }
 
 export async function ensureBootstrapped(): Promise<void> {
   if (g.__birdserverBootstrapped) return;
+
   if (!g.__birdserverBootstrapPromise) {
     g.__birdserverBootstrapPromise = doBootstrap()
-      .then(() => { g.__birdserverBootstrapped = true; })
-      .catch((err) => {
-        console.error("[Bootstrap] failed:", err);
-        g.__birdserverBootstrapped = false;
+      .then(() => {
+        g.__birdserverBootstrapped = true;
+      })
+      .catch((error) => {
         g.__birdserverBootstrapPromise = undefined;
-        throw err;
+        g.__birdserverBootstrapped = false;
+        console.error("[Bootstrap] failed:", error);
+        throw error;
       });
   }
-  try {
-    await g.__birdserverBootstrapPromise;
-  } catch { /* retry next request */ }
+
+  return g.__birdserverBootstrapPromise;
 }
