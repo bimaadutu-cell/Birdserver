@@ -4,10 +4,11 @@ import { eq, count, sql } from "drizzle-orm";
 import Link from "next/link";
 import { formatDate } from "@/lib/utils";
 import DeleteUserButton from "./DeleteUserButton";
+import { withSchemaSafety } from "@/lib/migrate";
 
 export default async function UsersPage() {
-  const allUsers = await db
-    .select({
+  const allUsers = await withSchemaSafety(() =>
+    db.select({
       id: users.id,
       username: users.username,
       email: users.email,
@@ -18,12 +19,14 @@ export default async function UsersPage() {
       createdAt: users.createdAt,
     })
     .from(users)
-    .orderBy(sql`${users.createdAt} DESC`);
+    .orderBy(sql`${users.createdAt} DESC`)
+  );
 
-  const serverCounts = await db
-    .select({ ownerId: servers.ownerId, count: count() })
-    .from(servers)
-    .groupBy(servers.ownerId);
+  const serverCounts = await withSchemaSafety(() =>
+    db.select({ ownerId: servers.ownerId, count: count() })
+      .from(servers)
+      .groupBy(servers.ownerId)
+  );
 
   const serverCountMap = new Map(serverCounts.map((s) => [s.ownerId, s.count]));
 

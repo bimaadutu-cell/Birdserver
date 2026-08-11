@@ -39,12 +39,20 @@ export default function CreateUserPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(form),
       });
-      const data = await res.json();
-      if (data.success) {
-        setSuccess(`\u2714  Account created: ${data.data.username} (${data.data.role})`);
+      // Safely parse response body - may be empty on 500
+      const rawText = await res.text();
+      let data: { success?: boolean; data?: { username: string; role: string }; error?: { code: string; message: string } } | null = null;
+      try {
+        data = rawText ? JSON.parse(rawText) : null;
+      } catch {
+        setError(`Server returned invalid response (HTTP ${res.status}): ${rawText.substring(0, 200) || "empty body"}`);
+        return;
+      }
+      if (data?.success) {
+        setSuccess(`\u2714  Account created: ${data.data!.username} (${data.data!.role})`);
         setTimeout(() => router.push("/admin/users"), 900);
       } else {
-        setError(`[${data.error?.code}] ${data.error?.message || "Failed to create user."}`);
+        setError(`[${data?.error?.code || "HTTP" + res.status}] ${data?.error?.message || `Server error (HTTP ${res.status})`}`);
       }
     } catch (e) {
       setError("Network error: " + (e as Error).message);

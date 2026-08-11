@@ -22,15 +22,13 @@ async function doBootstrap(): Promise<void> {
     // 0. Make sure the schema is present (idempotent DDL)
     await ensureMigrated();
 
-    // 1. Admin
-    // Check the admin account itself instead of relying on the total user count.
-    // This also repairs legacy/drifted databases where an admin row exists but
-    // its password_hash is not a usable bcrypt string.
-    const adminRows = await withSchemaSafety(() =>
+    // 1. Admin - self-heals corrupted/legacy admin user
+    const existingAdmin = await withSchemaSafety(() =>
       db.select().from(users).where(eq(users.username, "admin")).limit(1)
     );
 
-    if (adminRows.length === 0) {
+    if (existingAdmin.length === 0) {
+      // No admin - create fresh
       const passwordHash = await hashPassword("admin00");
       await db.insert(users).values({
         id: uuidv4(),
@@ -43,18 +41,35 @@ async function doBootstrap(): Promise<void> {
       });
       console.log("[Bootstrap] Created default admin user (admin/admin00)");
     } else {
-      const admin = adminRows[0] as typeof adminRows[0] & { passwordHash?: unknown };
-      if (typeof admin.passwordHash !== "string" || !admin.passwordHash.startsWith("$2")) {
+      // Admin exists - check for corruption from legacy deploys
+      const admin = existingAdmin[0];
+      const needsRepair =
+        !admin.passwordHash ||
+        typeof admin.passwordHash !== "string" ||
+        admin.passwordHash.length < 20 ||
+        !admin.email ||
+        !admin.role;
+
+      if (needsRepair) {
+        console.log("[Bootstrap] Admin user is corrupted (legacy schema). Resetting to admin/admin00...");
         const passwordHash = await hashPassword("admin00");
-        await db.update(users)
-          .set({ passwordHash, role: "ADMIN", suspended: false })
-          .where(eq(users.id, admin.id));
-        console.log("[Bootstrap] Repaired default admin password (admin/admin00)");
+        await db.update(users).set({
+          passwordHash,
+          email: admin.email || "admin@birdserver.local",
+          role: "ADMIN",
+          firstName: admin.firstName || "BirdServer",
+          lastName: admin.lastName || "Admin",
+          suspended: false,
+          updatedAt: new Date(),
+        }).where(eq(users.id, admin.id));
+        console.log("[Bootstrap] Admin repaired.");
       }
     }
 
     // 2. At least one node
-    const [{ value: nodeCount }] = await db.select({ value: count() }).from(nodes);
+    const [{ value: nodeCount }] = await withSchemaSafety(() =>
+      db.select({ value: count() }).from(nodes)
+    );
     let defaultNodeId: string | null = null;
     if (nodeCount === 0) {
       defaultNodeId = uuidv4();
@@ -94,7 +109,9 @@ async function doBootstrap(): Promise<void> {
     }
 
     // 3. Ports (only if we just created the node and there are none)
-    const [{ value: portCount }] = await db.select({ value: count() }).from(ports);
+    const [{ value: portCount }] = await withSchemaSafety(() =>
+      db.select({ value: count() }).from(ports)
+    );
     if (portCount === 0) {
       const targetNodeId = defaultNodeId
         || (await db.select({ id: nodes.id }).from(nodes).limit(1))[0]?.id;

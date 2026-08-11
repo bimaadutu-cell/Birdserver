@@ -12,38 +12,12 @@ export async function hashPassword(password: string): Promise<string> {
 
 export async function verifyPassword(
   password: string,
-  hash: unknown
+  hash: string | null | undefined
 ): Promise<boolean> {
-  // bcryptjs requires both arguments to be strings. Some legacy/drifted
-  // databases can return a password hash as an object at runtime even
-  // though the Drizzle schema declares the column as text.
-  if (typeof password !== "string" || !password) return false;
-
-  let normalizedHash: string | null = null;
-
-  if (typeof hash === "string") {
-    normalizedHash = hash;
-  } else if (hash && typeof hash === "object") {
-    // Be tolerant of common driver/legacy wrappers without ever passing
-    // an object directly to bcrypt.
-    const value = hash as Record<string, unknown>;
-    const candidate =
-      value.passwordHash ??
-      value.password_hash ??
-      value.hash ??
-      value.value;
-
-    if (typeof candidate === "string") {
-      normalizedHash = candidate;
-    }
-  }
-
-  if (!normalizedHash) return false;
-
+  if (!hash || typeof hash !== "string" || hash.length < 4) return false;
   try {
-    return await bcrypt.compare(password, normalizedHash);
-  } catch (err) {
-    console.warn("[auth] password verification failed:", (err as Error).message);
+    return await bcrypt.compare(password, hash);
+  } catch {
     return false;
   }
 }
