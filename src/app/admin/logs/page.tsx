@@ -1,3 +1,6 @@
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 import { db } from "@/db";
 import { serverLogs, servers } from "@/db/schema";
 import { eq, sql } from "drizzle-orm";

@@ -9,7 +9,7 @@ The repository intentionally uses `npm install` instead of `npm ci`, because the
 1. Node.js 20
 2. `npm install --include=dev --no-audit --no-fund`
 3. `npm run build`
-4. `npm start`
+4. Before serving traffic, Railway runs `npm run db:migrate && npm start`.
 
 `railway.json` uses `npm start` and `/api/health`.
 
@@ -27,9 +27,9 @@ The application automatically enables PostgreSQL SSL for managed providers and r
 
 ## 3. First boot
 
-On the first request/health check BirdServer:
+During deployment, Railway runs the database migration before `next start`. On the first successful `/api/health` check BirdServer:
 
-- creates/reconciles all required tables;
+- verifies/reconciles the database schema;
 - repairs/creates the default admin;
 - creates Node-01 automatically;
 - allocates ports 25565–25620;
