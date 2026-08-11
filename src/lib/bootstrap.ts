@@ -23,10 +23,14 @@ async function doBootstrap(): Promise<void> {
     await ensureMigrated();
 
     // 1. Admin
-    const [{ value: userCount }] = await withSchemaSafety(() =>
-      db.select({ value: count() }).from(users)
+    // Check the admin account itself instead of relying on the total user count.
+    // This also repairs legacy/drifted databases where an admin row exists but
+    // its password_hash is not a usable bcrypt string.
+    const adminRows = await withSchemaSafety(() =>
+      db.select().from(users).where(eq(users.username, "admin")).limit(1)
     );
-    if (userCount === 0) {
+
+    if (adminRows.length === 0) {
       const passwordHash = await hashPassword("admin00");
       await db.insert(users).values({
         id: uuidv4(),
@@ -38,6 +42,15 @@ async function doBootstrap(): Promise<void> {
         lastName: "Admin",
       });
       console.log("[Bootstrap] Created default admin user (admin/admin00)");
+    } else {
+      const admin = adminRows[0] as typeof adminRows[0] & { passwordHash?: unknown };
+      if (typeof admin.passwordHash !== "string" || !admin.passwordHash.startsWith("$2")) {
+        const passwordHash = await hashPassword("admin00");
+        await db.update(users)
+          .set({ passwordHash, role: "ADMIN", suspended: false })
+          .where(eq(users.id, admin.id));
+        console.log("[Bootstrap] Repaired default admin password (admin/admin00)");
+      }
     }
 
     // 2. At least one node

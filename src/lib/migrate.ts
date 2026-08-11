@@ -236,6 +236,39 @@ async function reconcileColumns(tableName: string): Promise<void> {
   }
 }
 
+async function repairCriticalColumnTypes(): Promise<void> {
+  // Legacy databases can have password_hash created with the wrong PostgreSQL
+  // type (for example jsonb). Drizzle then returns an object to bcryptjs,
+  // producing: "Illegal arguments: string, object".
+  try {
+    const result = await db.execute(sql`
+      SELECT data_type
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'users'
+        AND column_name = 'password_hash'
+      LIMIT 1
+    `);
+    const rows = (result as unknown as { rows?: { data_type: string }[] }).rows
+      ?? (result as unknown as { data_type: string }[]);
+
+    if (rows[0] && rows[0].data_type !== "text") {
+      console.warn(`[Migrate] Repairing users.password_hash type: ${rows[0].data_type} -> text`);
+      await db.execute(sql.raw(`
+        ALTER TABLE "users"
+        ALTER COLUMN "password_hash" TYPE text
+        USING CASE
+          WHEN jsonb_typeof("password_hash"::jsonb) = 'string'
+            THEN trim(both '"' from "password_hash"::text)
+          ELSE "password_hash"::text
+        END
+      `));
+    }
+  } catch (err) {
+    console.warn("[Migrate] password_hash type check failed:", (err as Error).message.split("\n")[0]);
+  }
+}
+
 async function doMigrate(): Promise<void> {
   console.log("[Migrate] Starting schema reconciliation...");
 
@@ -257,7 +290,10 @@ async function doMigrate(): Promise<void> {
     await reconcileColumns(tableName);
   }
 
-  // 4. Set NOT NULL + defaults on columns that had to be added nullable.
+  // 4. Repair legacy password_hash type before bootstrap/login touches bcrypt.
+  await repairCriticalColumnTypes();
+
+  // 5. Set NOT NULL + defaults on columns that had to be added nullable.
   //    Only apply when the table is empty (safe) OR the column is already populated.
   await exec(`UPDATE "users" SET "email" = "id" || '@birdserver.local' WHERE "email" IS NULL;`);
   await exec(`UPDATE "users" SET "role" = 'USER' WHERE "role" IS NULL;`);
@@ -265,15 +301,15 @@ async function doMigrate(): Promise<void> {
   await exec(`UPDATE "users" SET "created_at" = now() WHERE "created_at" IS NULL;`);
   await exec(`UPDATE "users" SET "updated_at" = now() WHERE "updated_at" IS NULL;`);
 
-  // 5. Add unique constraints on username/email (safely)
+  // 6. Add unique constraints on username/email (safely)
   await exec(`DO $$ BEGIN ALTER TABLE "users" ADD CONSTRAINT "users_username_unique" UNIQUE ("username"); EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $$;`);
   await exec(`DO $$ BEGIN ALTER TABLE "users" ADD CONSTRAINT "users_email_unique" UNIQUE ("email"); EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $$;`);
 
-  // 6. Indexes
+  // 7. Indexes
   await exec(`CREATE INDEX IF NOT EXISTS "server_logs_server_id_idx" ON "server_logs"("server_id");`);
   await exec(`CREATE INDEX IF NOT EXISTS "audit_logs_created_at_idx" ON "audit_logs"("created_at");`);
 
-  // 7. Final verification: walk expected columns and log any that are still missing
+  // 8. Final verification: walk expected columns and log any that are still missing
   for (const [tableName, expected] of Object.entries(EXPECTED_COLUMNS)) {
     if (!(await tableExists(tableName))) {
       console.warn(`[Migrate] WARNING: table "${tableName}" still missing after migrate`);

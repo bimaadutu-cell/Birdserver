@@ -1,11 +1,11 @@
 # Nixpacks configuration for Railway / other Nixpacks-based platforms.
-# Node 20 LTS + build + start.
+# Node 22 LTS + build + start.
 
 [phases.setup]
-nixPkgs = ["nodejs_20"]
+nixPkgs = ["nodejs_22"]
 
 [phases.build]
-cmds = ["npm ci --include=dev", "npm run build"]
+cmds = ["npm install", "npm run build"]
 
 [start]
 cmd = "npm start"
