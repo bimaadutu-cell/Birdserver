@@ -17,16 +17,20 @@ type GlobalState = typeof globalThis & {
 const g = globalThis as GlobalState;
 
 async function doBootstrap(): Promise<void> {
-  // Authentication depends only on the database schema + admin record.
-  // Node/port provisioning is optional and must never prevent login.
   await ensureMigrated();
 
   const adminUsername = process.env.BIRDSERVER_ADMIN_USERNAME || "admin";
   const adminPassword = process.env.BIRDSERVER_ADMIN_PASSWORD || "admin00";
   const adminEmail = process.env.BIRDSERVER_ADMIN_EMAIL || "admin@birdserver.local";
 
+  // Optional one-time recovery. Set BIRDSERVER_RESET_ADMIN_PASSWORD=1 in Railway
+  // only when you intentionally want to reset the configured admin password.
+  const resetAdmin = process.env.BIRDSERVER_RESET_ADMIN_PASSWORD === "1";
+
+  // IMPORTANT: the old code only created an admin when users.count() === 0.
+  // If Railway already contained a normal user, admin could never be created.
   const existingAdmin = await db
-    .select({ id: users.id, passwordHash: users.passwordHash, role: users.role, suspended: users.suspended })
+    .select({ id: users.id })
     .from(users)
     .where(eq(users.username, adminUsername))
     .limit(1);
@@ -43,77 +47,91 @@ async function doBootstrap(): Promise<void> {
       suspended: false,
     });
     console.log(`[Bootstrap] Created admin account: ${adminUsername}`);
-  } else if (process.env.BIRDSERVER_RESET_ADMIN_PASSWORD === "1") {
-    // Opt-in recovery switch for an existing/broken deployment.
-    // It is deliberately disabled by default so normal redeploys do not
-    // unexpectedly overwrite a changed administrator password.
+  } else if (resetAdmin) {
     await db.update(users).set({
       passwordHash: await hashPassword(adminPassword),
       role: "ADMIN",
       suspended: false,
       email: adminEmail,
       updatedAt: new Date(),
-    }).where(eq(users.id, existingAdmin[0].id));
-    console.log(`[Bootstrap] Admin password reset for ${adminUsername}.`);
+    }).where(eq(users.username, adminUsername));
+    console.log(`[Bootstrap] Reset admin password for: ${adminUsername}`);
   }
 
-  // Everything below is best-effort infrastructure provisioning. A failure
-  // here must NOT make /api/auth/login unavailable.
-  try {
-    const [{ value: nodeCount }] = await db.select({ value: count() }).from(nodes);
-    let nodeId: string | undefined;
+  // Keep the node layer usable on a new deployment.
+  const [{ value: nodeCount }] = await db.select({ value: count() }).from(nodes);
+  let nodeId: string | undefined;
 
-    if (nodeCount === 0) {
-      nodeId = uuidv4();
+  if (Number(nodeCount) === 0) {
+    nodeId = uuidv4();
 
-      const fqdn =
-        process.env.BIRDSERVER_NODE_FQDN ||
-        process.env.RAILWAY_PUBLIC_DOMAIN ||
-        process.env.RENDER_EXTERNAL_HOSTNAME ||
-        process.env.VERCEL_URL ||
-        "localhost";
+    const fqdn =
+      process.env.BIRDSERVER_NODE_FQDN ||
+      process.env.RAILWAY_PUBLIC_DOMAIN ||
+      process.env.RENDER_EXTERNAL_HOSTNAME ||
+      process.env.VERCEL_URL ||
+      "localhost";
 
-      const platform =
-        process.env.RAILWAY_PROJECT_ID || process.env.RAILWAY_ENVIRONMENT_ID
-          ? "railway"
-          : process.env.VERCEL
-            ? "vercel"
-            : process.env.RENDER
-              ? "render"
-              : "local";
+    const platform =
+      process.env.RAILWAY_PROJECT_ID || process.env.RAILWAY_ENVIRONMENT_ID
+        ? "railway"
+        : process.env.VERCEL
+          ? "vercel"
+          : process.env.RENDER
+            ? "render"
+            : "local";
 
-      const totalRamMb = Number(process.env.BIRDSERVER_NODE_RAM_MB || Math.floor(os.totalmem() / 1024 / 1024));
-      const totalCpuPercent = Number(process.env.BIRDSERVER_NODE_CPU || os.cpus().length * 100);
-      const totalStorageMb = Number(process.env.BIRDSERVER_NODE_STORAGE_MB || 102400);
+    const boundedInt = (value: string | undefined, fallback: number, min: number, max: number) => {
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed)) return fallback;
+      return Math.min(max, Math.max(min, Math.trunc(parsed)));
+    };
 
-      await db.insert(nodes).values({
-        id: nodeId,
-        name: `Node-01 (${platform})`,
-        description: `Auto-provisioned on ${platform}`,
-        fqdn,
-        port: 8080,
-        status: "ONLINE",
-        totalRamMb,
-        totalCpuPercent,
-        totalStorageMb,
-      });
-      console.log(`[Bootstrap] Created ${platform} node.`);
-    } else {
-      const first = await db.select({ id: nodes.id }).from(nodes).limit(1);
-      nodeId = first[0]?.id;
+    const totalRamMb = boundedInt(
+      process.env.BIRDSERVER_NODE_RAM_MB,
+      Math.floor(os.totalmem() / 1024 / 1024),
+      128,
+      2147483647,
+    );
+    const totalCpuPercent = boundedInt(
+      process.env.BIRDSERVER_NODE_CPU,
+      os.cpus().length * 100,
+      100,
+      2147483647,
+    );
+    const totalStorageMb = boundedInt(
+      process.env.BIRDSERVER_NODE_STORAGE_MB,
+      102400,
+      1024,
+      2147483647,
+    );
+
+    await db.insert(nodes).values({
+      id: nodeId,
+      name: `Node-01 (${platform})`,
+      description: `Auto-provisioned on ${platform}`,
+      fqdn,
+      port: 8080,
+      status: "ONLINE",
+      totalRamMb,
+      totalCpuPercent,
+      totalStorageMb,
+    });
+
+    console.log(`[Bootstrap] Created ${platform} node.`);
+  } else {
+    const first = await db.select({ id: nodes.id }).from(nodes).limit(1);
+    nodeId = first[0]?.id;
+  }
+
+  const [{ value: portCount }] = await db.select({ value: count() }).from(ports);
+  if (Number(portCount) === 0 && nodeId) {
+    const values = [];
+    for (let port = 25565; port <= 25620; port++) {
+      values.push({ nodeId, port, allocated: false });
     }
-
-    const [{ value: portCount }] = await db.select({ value: count() }).from(ports);
-    if (portCount === 0 && nodeId) {
-      const values = [];
-      for (let port = 25565; port <= 25620; port++) {
-        values.push({ nodeId, port, allocated: false });
-      }
-      await db.insert(ports).values(values);
-      console.log("[Bootstrap] Created ports 25565-25620.");
-    }
-  } catch (error) {
-    console.warn("[Bootstrap] Optional node/port provisioning failed; login remains available:", error);
+    await db.insert(ports).values(values);
+    console.log("[Bootstrap] Created ports 25565-25620.");
   }
 }
 

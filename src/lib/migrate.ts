@@ -178,7 +178,7 @@ async function columns(table: string): Promise<Set<string>> {
   const result = await db.execute(sql`
     SELECT column_name
     FROM information_schema.columns
-    WHERE table_schema = 'public' AND table_name = ${table}
+    WHERE table_schema = current_schema() AND table_name = ${table}
   `);
   const rows = (result as unknown as { rows?: Array<{ column_name: string }> }).rows
     ?? (result as unknown as Array<{ column_name: string }>);
@@ -237,10 +237,10 @@ async function ensureIndexes() {
 }
 
 async function backfillUsers() {
-  // These statements are intentionally idempotent.
-  await run(`UPDATE "users" SET "id" = md5(random()::text || clock_timestamp()::text) WHERE "id" IS NULL OR "id" = '';`);
+  // Only backfill nullable/default fields. Do not rewrite legacy primary keys:
+  // the dedicated BirdServer schema means old public data is never touched.
   await run(`UPDATE "users" SET "username" = 'admin' WHERE "username" IS NULL OR "username" = '';`);
-  await run(`UPDATE "users" SET "email" = "username" || '@birdserver.local' WHERE "email" IS NULL OR "email" = '';`);
+  await run(`UPDATE "users" SET "email" = ("username" || '@birdserver.local') WHERE "email" IS NULL OR "email" = '';`);
   await run(`UPDATE "users" SET "role" = 'USER' WHERE "role" IS NULL;`);
   await run(`UPDATE "users" SET "suspended" = false WHERE "suspended" IS NULL;`);
   await run(`UPDATE "users" SET "created_at" = now() WHERE "created_at" IS NULL;`);
@@ -267,6 +267,12 @@ async function migrate() {
       "DATABASE_URL is missing. In Railway, connect a PostgreSQL database to this service and expose its DATABASE_URL variable."
     );
   }
+
+  // Use a dedicated schema. This prevents legacy/public tables with incompatible
+  // column types from breaking a fresh BirdServer deployment.
+  const schemaName = (process.env.BIRDSERVER_DB_SCHEMA || "birdserver").replace(/[^a-zA-Z0-9_]/g, "");
+  await run(`CREATE SCHEMA IF NOT EXISTS "${schemaName}";`);
+  await run(`SET search_path TO "${schemaName}", public;`);
 
   // Verify connectivity before touching the application schema.
   await run("SELECT 1");

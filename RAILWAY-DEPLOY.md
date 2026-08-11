@@ -1,45 +1,27 @@
 # BirdServer — Railway deployment
 
-## Required Railway setup
+## Required variable
 
-1. Create a PostgreSQL service in the same Railway project.
-2. Connect the BirdServer service to that PostgreSQL service.
-3. Make sure the BirdServer service has:
-   - `DATABASE_URL` = the PostgreSQL connection string.
-4. Optional:
-   - `BIRDSERVER_ADMIN_USERNAME` (default: `admin`)
-   - `BIRDSERVER_ADMIN_PASSWORD` (default: `admin00`)
-   - `BIRDSERVER_ADMIN_EMAIL` (default: `admin@birdserver.local`)
-5. Redeploy the service.
+Set `DATABASE_URL` to the PostgreSQL/Neon connection string in Railway Variables.
+Do not commit it to GitHub.
 
-The application now runs an idempotent schema reconciliation on startup. It will create the tables and the default administrator when they are missing.
+BirdServer uses the `birdserver` PostgreSQL schema by default (`BIRDSERVER_DB_SCHEMA` can override it). This intentionally isolates the app from old/incompatible tables in `public`.
 
-## Verify before logging in
+## Admin
 
-Open:
+Default:
+- username: `admin`
+- password: `admin00`
 
-`/api/health`
+Optional variables:
+- `BIRDSERVER_ADMIN_USERNAME`
+- `BIRDSERVER_ADMIN_PASSWORD`
+- `BIRDSERVER_ADMIN_EMAIL`
 
-A ready deployment returns JSON containing:
+For one-time recovery, set `BIRDSERVER_RESET_ADMIN_PASSWORD=1`, deploy, login successfully, then REMOVE that variable.
 
-- `"ready": true`
-- `"database": "connected"`
-- `"admin": true`
+## Health
 
-If it returns `DATABASE_URL_MISSING`, connect PostgreSQL to the BirdServer Railway service.
+Open `/api/health`. A ready deployment returns `ready: true`, `database: connected`, and `admin: true`.
 
-## Default login
-
-Username: `admin`
-
-Password: `admin00`
-
-If you changed `BIRDSERVER_ADMIN_USERNAME` / `BIRDSERVER_ADMIN_PASSWORD`, use those values instead.
-
-## Important
-
-Do not put a local connection such as:
-
-`postgresql://postgres:postgres@127.0.0.1:5432/app_db`
-
-into Railway. Railway must use its PostgreSQL `DATABASE_URL`.
+The runtime bootstrap is non-fatal: a temporary database failure no longer crashes the Railway container. The service stays online and `/api/health` reports the actual problem.
