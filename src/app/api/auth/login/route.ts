@@ -87,7 +87,7 @@ export async function POST(req: NextRequest) {
       },
     });
   } catch (err) {
-    console.error("Login error:", err);
+    console.error("[BirdServer] Login error:", err instanceof Error ? err.stack || err.message : err);
     return NextResponse.json(
       { success: false, error: { code: "SERVER_ERROR", message: "An internal error occurred." } },
       { status: 500 }

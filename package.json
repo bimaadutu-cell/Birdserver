@@ -4,10 +4,11 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start",
+    "start": "npx drizzle-kit push --config=drizzle.config.ts && next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "seed": "npx tsx scripts/seed.ts"
+    "seed": "tsx scripts/seed.ts",
+    "db:push": "drizzle-kit push --config=drizzle.config.ts"
   },
   "dependencies": {
     "@types/adm-zip": "^0.5.8",

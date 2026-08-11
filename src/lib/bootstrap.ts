@@ -98,13 +98,17 @@ async function doBootstrap(): Promise<void> {
 }
 
 export async function ensureBootstrapped(): Promise<void> {
+  if (!process.env.DATABASE_URL) {
+    throw new Error("DATABASE_URL is not configured.");
+  }
+
   if (g.__birdserverBootstrapped) return;
+
   if (!g.__birdserverBootstrapPromise) {
     g.__birdserverBootstrapPromise = doBootstrap().then(() => {
       g.__birdserverBootstrapped = true;
     });
   }
-  try {
-    await g.__birdserverBootstrapPromise;
-  } catch { /* retry next time */ }
+
+  await g.__birdserverBootstrapPromise;
 }
