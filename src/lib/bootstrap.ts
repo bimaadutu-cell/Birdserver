@@ -19,13 +19,13 @@ const g = globalThis as GlobalState;
 async function doBootstrap(): Promise<void> {
   await ensureMigrated();
 
-  const adminUsername = process.env.BIRDSERVER_ADMIN_USERNAME || "admin";
-  const adminPassword = process.env.BIRDSERVER_ADMIN_PASSWORD || "admin00";
+  // BirdServer panel login is intentionally username + password only.
+  // Defaults requested for the built-in administrator:
+  // username: admin
+  // password: admin00
+  const adminUsername = "admin";
+  const adminPassword = "admin00";
   const adminEmail = process.env.BIRDSERVER_ADMIN_EMAIL || "admin@birdserver.local";
-
-  // Optional one-time recovery. Set BIRDSERVER_RESET_ADMIN_PASSWORD=1 in Railway
-  // only when you intentionally want to reset the configured admin password.
-  const resetAdmin = process.env.BIRDSERVER_RESET_ADMIN_PASSWORD === "1";
 
   // IMPORTANT: the old code only created an admin when users.count() === 0.
   // If Railway already contained a normal user, admin could never be created.
@@ -47,7 +47,9 @@ async function doBootstrap(): Promise<void> {
       suspended: false,
     });
     console.log(`[Bootstrap] Created admin account: ${adminUsername}`);
-  } else if (resetAdmin) {
+  } else {
+    // Repair an existing admin account as well. This fixes deployments where
+    // the user was created with an old password or an old non-admin role.
     await db.update(users).set({
       passwordHash: await hashPassword(adminPassword),
       role: "ADMIN",
@@ -55,7 +57,7 @@ async function doBootstrap(): Promise<void> {
       email: adminEmail,
       updatedAt: new Date(),
     }).where(eq(users.username, adminUsername));
-    console.log(`[Bootstrap] Reset admin password for: ${adminUsername}`);
+    console.log(`[Bootstrap] Verified admin credentials for: ${adminUsername}`);
   }
 
   // Keep the node layer usable on a new deployment.

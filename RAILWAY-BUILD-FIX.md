@@ -36,11 +36,11 @@ tables on first request. `/api/health` also runs the migration/bootstrap checks.
 Connect a Railway PostgreSQL service to the BirdServer service so that
 `DATABASE_URL` is available at runtime.
 
-Optional admin variables:
+Admin login:
+- username: `admin`
+- password: `admin00`
 
-- `BIRDSERVER_ADMIN_USERNAME=admin`
-- `BIRDSERVER_ADMIN_PASSWORD=admin00`
-- `BIRDSERVER_ADMIN_EMAIL=admin@birdserver.local`
+`BIRDSERVER_ADMIN_EMAIL` is optional and is only used for the admin record.
 
 After deployment, open:
 
