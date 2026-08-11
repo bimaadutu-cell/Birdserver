@@ -7,7 +7,8 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "seed": "npx tsx scripts/seed.ts"
+    "seed": "npx tsx scripts/seed.ts",
+    "db:migrate": "tsx scripts/migrate.ts"
   },
   "dependencies": {
     "@types/adm-zip": "^0.5.8",

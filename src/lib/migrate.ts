@@ -179,10 +179,19 @@ async function exec(stmt: string): Promise<void> {
   try {
     await db.execute(sql.raw(stmt));
   } catch (err) {
-    const msg = (err as Error).message.split("\n")[0];
-    // These are expected "already exists" errors - fine to ignore.
-    if (/already exists|does not exist|duplicate/i.test(msg)) return;
-    console.warn("[Migrate] statement failed:", msg, "\n>>>", stmt.substring(0, 120));
+    const e = err as Error & { code?: string };
+    const msg = String(e.message || "").split("\n")[0];
+    // Idempotent DDL may race with another instance. Only ignore genuine
+    // "already exists" conditions; never hide connection/permission/SQL errors.
+    if (
+      e.code === "42710" || // duplicate_object
+      e.code === "42P07" || // duplicate_table
+      /already exists/i.test(msg)
+    ) {
+      return;
+    }
+    console.error("[Migrate] statement failed:", msg, "\n>>>", stmt.substring(0, 240));
+    throw err;
   }
 }
 
@@ -236,7 +245,7 @@ async function reconcileColumns(tableName: string): Promise<void> {
   }
 }
 
-async function doMigrate(): Promise<void> {
+async function reconcileSchema(): Promise<void> {
   console.log("[Migrate] Starting schema reconciliation...");
 
   // 1. Enums first
@@ -289,6 +298,17 @@ async function doMigrate(): Promise<void> {
   console.log("[Migrate] Reconciliation complete.");
 }
 
+async function doMigrate(): Promise<void> {
+  // PostgreSQL advisory lock prevents two Railway instances/cold requests
+  // from attempting the first schema creation at the same time.
+  await db.execute(sql`select pg_advisory_lock(hashtext('birdserver-schema-v2'))`);
+  try {
+    await reconcileSchema();
+  } finally {
+    await db.execute(sql`select pg_advisory_unlock(hashtext('birdserver-schema-v2'))`).catch(() => {});
+  }
+}
+
 type G = typeof globalThis & {
   __birdserverMigratePromise?: Promise<void>;
   __birdserverMigrateDone?: boolean;
@@ -314,7 +334,7 @@ export async function ensureMigrated(force = false): Promise<void> {
         throw err;
       });
   }
-  try { await g.__birdserverMigratePromise; } catch {}
+  await g.__birdserverMigratePromise;
 }
 
 /**

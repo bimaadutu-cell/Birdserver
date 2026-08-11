@@ -10,12 +10,8 @@ export default async function AdminLayout({
   children: React.ReactNode;
 }) {
   // Guarantee schema + admin user exist before any admin page loads
-  try {
-    await ensureMigrated();
-    await ensureBootstrapped();
-  } catch (err) {
-    console.error("[AdminLayout] bootstrap failed:", (err as Error).message);
-  }
+  await ensureMigrated();
+  await ensureBootstrapped();
 
   const session = await getSession();
   if (!session) redirect("/login");

@@ -36,8 +36,10 @@ function resolveConnectionString(): string {
 }
 
 function needsSsl(url: string): boolean {
-  // Explicit sslmode in URL wins
-  if (/[?&]sslmode=/i.test(url)) return true;
+  // Respect an explicit sslmode value from the connection string.
+  const sslMode = url.match(/[?&]sslmode=([^&]+)/i)?.[1]?.toLowerCase();
+  if (sslMode === "disable") return false;
+  if (sslMode === "require" || sslMode === "verify-ca" || sslMode === "verify-full") return true;
   // Force SSL on common managed providers
   const managedHosts = [
     "railway.app", "rlwy.net", "supabase.co", "neon.tech", "aivencloud.com",

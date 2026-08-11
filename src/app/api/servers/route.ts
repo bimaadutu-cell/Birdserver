@@ -21,6 +21,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  try {
   const auth = await authenticate(req, "servers:create");
   if (!auth.success) return apiError(auth.error!.code, auth.error!.message, auth.statusCode!);
 
@@ -97,4 +98,9 @@ export async function POST(req: NextRequest) {
   });
 
   return apiSuccess(newServer, 201);
+  } catch (err) {
+    console.error("[CreateServer] failed:", err);
+    const message = err instanceof Error ? err.message : "Unexpected server error.";
+    return apiError("CREATE_SERVER_FAILED", message.substring(0, 300), 500);
+  }
 }

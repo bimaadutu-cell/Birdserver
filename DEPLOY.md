@@ -1,48 +1,75 @@
-# Deploy BirdServer
+# BirdServer — Railway deployment (fixed)
 
-## Railway (recommended)
+## 1. Railway
 
-1. Push repo to GitHub.
-2. Railway → **New Project** → **Deploy from GitHub Repo** → pick this repo.
-3. In the same project: **New** → **Database** → **Add PostgreSQL**.
-4. Click your **web service** → **Variables** tab.
-5. Verify `DATABASE_URL` is set. If not, click **Add Reference** and pick `Postgres.DATABASE_URL`.
-6. Redeploy.
-7. Visit `https://<your-app>.up.railway.app/api/debug` to confirm all systems green.
-8. Login at `/login` with `admin` / `admin00`.
+Create one Railway service from this GitHub repository.
 
-### Optional env variables
+The repository intentionally uses `npm install` instead of `npm ci`, because the project does not require a committed lockfile. Nixpacks runs:
 
-| Variable                       | Default             | Description |
-|--------------------------------|---------------------|-------------|
-| `DATABASE_URL`                 | required            | PostgreSQL connection string |
-| `BIRDSERVER_NODE_FQDN`         | auto-detect         | Public hostname for the auto-created node |
-| `BIRDSERVER_NODE_RAM_MB`       | os.totalmem         | Node RAM budget in MB |
-| `BIRDSERVER_NODE_CPU`          | cpus * 100          | Node CPU budget in % |
-| `BIRDSERVER_NODE_STORAGE_MB`   | 102400              | Node storage budget in MB |
-| `BIRDSERVER_CONTAINERS_ROOT`   | /tmp/birdserver-... | Where per-server files live |
-| `NODE_ENV`                     | production          | Should be `production` |
+1. Node.js 20
+2. `npm install --include=dev --no-audit --no-fund`
+3. `npm run build`
+4. `npm start`
 
-## Vercel
+`railway.json` uses `npm start` and `/api/health`.
 
-1. Import repo on Vercel.
-2. Add a Postgres integration (Vercel Postgres, Neon, Supabase, or any external).
-3. Ensure `DATABASE_URL` or `POSTGRES_URL` is set in project env.
-4. Deploy.
+## 2. Database
 
-## Docker / VPS
+### Railway PostgreSQL
+Add a PostgreSQL service in the same Railway project, then add a reference variable to the web service:
 
-```bash
-git clone <repo>
-cd birdserver
-npm ci
-npm run build
-DATABASE_URL=postgres://user:pass@host:5432/db npm start
-```
+`DATABASE_URL = ${{Postgres.DATABASE_URL}}`
 
-## Troubleshooting
+### Neon / external PostgreSQL
+Set the web service variable `DATABASE_URL` to the Neon connection string. Do not commit it to GitHub.
 
-- **Login shows `SERVER_ERROR`?** Open `/api/debug` to see the exact database error.
-- **`column does not exist`?** The auto-migrate should fix it on the next request. Refresh once.
-- **Railway DB connection times out?** Ensure the Postgres plugin is in the same project as the web service.
-- **SSL error?** Auto-detected for Railway/Render/Vercel. Force with `?sslmode=require` in the URL if needed.
+The application automatically enables PostgreSQL SSL for managed providers and respects an explicit `sslmode` in the URL.
+
+## 3. First boot
+
+On the first request/health check BirdServer:
+
+- creates/reconciles all required tables;
+- repairs/creates the default admin;
+- creates Node-01 automatically;
+- allocates ports 25565–25620;
+- then serves the panel.
+
+Default admin:
+
+- username: `admin`
+- password: `admin00`
+
+Change the password after first login if this panel is exposed publicly.
+
+## 4. Diagnostics
+
+Open:
+
+`/api/health`
+
+For a detailed safe diagnostic:
+
+`/api/debug`
+
+Unlike the previous build, migration errors are no longer silently swallowed. If the database is unreachable, `/api/health` reports the real failure instead of allowing a Server Component to fail later.
+
+## 5. Creating a server
+
+Go to:
+
+`/admin/servers/create`
+
+The form now uses a portable Node/npm startup command. It does not assume `/usr/local/bin/node` or `/usr/local/bin/npm`.
+
+A server created by the panel runs as a child Node process inside the Railway web service. This is suitable for lightweight Node.js/WhatsApp bots, but it is **not** Docker/Pterodactyl isolation. For full container isolation and persistent storage, use a VPS + Docker/Pterodactyl.
+
+## 6. Railway persistence
+
+Railway containers have ephemeral local storage unless a Volume is attached. For persistent server files, attach a Railway Volume and set:
+
+`BIRDSERVER_CONTAINERS_ROOT=/path/to/volume/birdserver-containers`
+
+## 7. Important
+
+Do not put database passwords, API keys, or session secrets into GitHub. Use Railway Variables / Neon secrets instead.

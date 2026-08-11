@@ -86,10 +86,10 @@ function translatePaths(cmd: string, serverDir: string): string {
 // Pterodactyl-style default startup used for every new server.
 export const DEFAULT_STARTUP_COMMAND =
   'if [ -d .git ] && [ "${AUTO_UPDATE}" = "1" ]; then git pull; fi; ' +
-  'if [ -n "${NODE_PACKAGES}" ]; then /usr/local/bin/npm install ${NODE_PACKAGES}; fi; ' +
-  'if [ -n "${UNNODE_PACKAGES}" ]; then /usr/local/bin/npm uninstall ${UNNODE_PACKAGES}; fi; ' +
-  'if [ -f /home/container/package.json ]; then /usr/local/bin/npm install; fi; ' +
-  '/usr/local/bin/node /home/container/${MAIN_FILE}';
+  'if [ -n "${NODE_PACKAGES}" ]; then npm install ${NODE_PACKAGES}; fi; ' +
+  'if [ -n "${UNNODE_PACKAGES}" ]; then npm uninstall ${UNNODE_PACKAGES}; fi; ' +
+  'if [ -f /home/container/package.json ]; then npm install --no-audit --no-fund; fi; ' +
+  'node /home/container/${MAIN_FILE}';
 
 // Simple per-server async mutex
 async function withLock<T>(serverId: string, fn: () => Promise<T>): Promise<T> {

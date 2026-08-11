@@ -1,11 +1,12 @@
-# Nixpacks configuration for Railway / other Nixpacks-based platforms.
-# Node 20 LTS + build + start.
-
+# Railway/Nixpacks deployment for BirdServer
 [phases.setup]
 nixPkgs = ["nodejs_20"]
 
+[phases.install]
+cmds = ["npm install --include=dev --no-audit --no-fund"]
+
 [phases.build]
-cmds = ["npm ci --include=dev", "npm run build"]
+cmds = ["npm run build"]
 
 [start]
 cmd = "npm start"
