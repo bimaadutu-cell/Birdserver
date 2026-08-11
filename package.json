@@ -4,7 +4,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start",
+    "start": "tsx scripts/start.ts",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "seed": "npx tsx scripts/seed.ts",
