@@ -282,14 +282,23 @@ export const IconBird = (p: P) => (
   >
     <defs>
       <linearGradient id={`birdgrad-${p.size || 20}`} x1="0" y1="0" x2="1" y2="1">
-        <stop offset="0%" stopColor="#00c8ff" />
-        <stop offset="100%" stopColor="#0080ff" />
+        <stop offset="0%" stopColor="#00d4ff" />
+        <stop offset="50%" stopColor="#7c9bff" />
+        <stop offset="100%" stopColor="#b04dff" />
       </linearGradient>
+      <filter id={`birdglow-${p.size || 20}`} x="-50%" y="-50%" width="200%" height="200%">
+        <feGaussianBlur stdDeviation="1.5" result="blur" />
+        <feMerge>
+          <feMergeNode in="blur" />
+          <feMergeNode in="SourceGraphic" />
+        </feMerge>
+      </filter>
     </defs>
     <path
       d="M32 8c-8 0-14 5-15 12l-8 4c-1 1-1 3 1 3l7 0c-1 3-2 6-2 10 0 10 8 18 18 18 8 0 15-6 17-13 6-1 10-6 10-13 0-8-7-14-15-14-1 0-2 0-3 1-2-5-6-8-10-8z"
       fill={p.color || `url(#birdgrad-${p.size || 20})`}
+      filter={`url(#birdglow-${p.size || 20})`}
     />
-    <circle cx="26" cy="26" r="2.2" fill="#050a14" />
+    <circle cx="26" cy="26" r="2.2" fill="#05010f" />
   </svg>
 );

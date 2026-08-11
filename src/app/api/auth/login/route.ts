@@ -4,11 +4,15 @@ import { users, auditLogs } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { verifyPassword, createSession } from "@/lib/auth";
 import { ensureBootstrapped } from "@/lib/bootstrap";
+import { ensureMigrated, withSchemaSafety } from "@/lib/migrate";
 import { cookies } from "next/headers";
 
 export async function POST(req: NextRequest) {
   try {
+    // Guarantee schema + admin user exist BEFORE any query
+    await ensureMigrated();
     await ensureBootstrapped();
+
     const body = await req.json();
     const { username, password } = body;
 
@@ -19,11 +23,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const userResult = await db
-      .select()
-      .from(users)
-      .where(eq(users.username, username))
-      .limit(1);
+    // Wrap the query so if the schema is still stale we auto-migrate + retry
+    const userResult = await withSchemaSafety(() =>
+      db.select().from(users).where(eq(users.username, username)).limit(1)
+    );
 
     if (!userResult.length) {
       return NextResponse.json(
@@ -52,17 +55,20 @@ export async function POST(req: NextRequest) {
     const ip = req.headers.get("x-forwarded-for") || "unknown";
     const ua = req.headers.get("user-agent") || "";
 
-    const { sessionId, expiresAt } = await createSession(user.id, ip, ua);
+    const { sessionId, expiresAt } = await withSchemaSafety(() =>
+      createSession(user.id, ip, ua)
+    );
 
-    try {
-      await db.insert(auditLogs).values({
+    // Audit log - best effort, don't block login if it fails
+    withSchemaSafety(() =>
+      db.insert(auditLogs).values({
         userId: user.id,
         action: "LOGIN",
         ipAddress: ip,
         userAgent: ua,
         metadata: { username: user.username },
-      });
-    } catch { /* ignore */ }
+      })
+    ).catch(() => {});
 
     const cookieStore = await cookies();
     cookieStore.set("birdserver_session", sessionId, {
@@ -87,9 +93,10 @@ export async function POST(req: NextRequest) {
       },
     });
   } catch (err) {
-    console.error("[BirdServer] Login error:", err instanceof Error ? err.stack || err.message : err);
+    console.error("Login error:", err);
+    const msg = (err as Error)?.message || "unknown";
     return NextResponse.json(
-      { success: false, error: { code: "SERVER_ERROR", message: "An internal error occurred." } },
+      { success: false, error: { code: "SERVER_ERROR", message: `Login failed: ${msg.substring(0, 200)}` } },
       { status: 500 }
     );
   }

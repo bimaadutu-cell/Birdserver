@@ -7,6 +7,68 @@ import FileManager from "@/components/FileManager";
 import { formatDate } from "@/lib/utils";
 import { IconArrow } from "@/components/Icons";
 
+// Console log line colorizer. Detects npm output and general log patterns
+// so success lines glow green, info lines cyan/blue, and errors turn red.
+const RE_STRIP_ANSI = /\x1b\[[0-9;]*m/g;
+function colorizeLog(raw: string, stream: "stdout" | "stderr" | "system"): string {
+  // BirdServer system messages stay cyan
+  if (stream === "system") return "#00c8ff";
+
+  const line = raw.replace(RE_STRIP_ANSI, "").trim();
+  const low = line.toLowerCase();
+
+  // Explicit ERROR / FAIL patterns  RED
+  if (
+    /^npm\s+err!?/i.test(line) ||
+    /^error\b/i.test(line) ||
+    /\berror:/i.test(line) ||
+    /\bfailed\b/i.test(low) ||
+    /\bfatal\b/i.test(low) ||
+    /uncaughtexception|unhandledrejection/i.test(low) ||
+    /\benoent\b|\beacces\b|\bepipe\b/i.test(low) ||
+    /cannot find module/i.test(low)
+  ) return "#ff5252";
+
+  // WARN patterns  ORANGE
+  if (
+    /^npm\s+warn\b/i.test(line) ||
+    /^warn(ing)?\b/i.test(line) ||
+    /\bwarning:/i.test(low) ||
+    /deprecat/i.test(low)
+  ) return "#ffab40";
+
+  // NPM SUCCESS patterns  GREEN
+  if (
+    /^added \d+ packages?/i.test(line) ||
+    /^removed \d+ packages?/i.test(line) ||
+    /^changed \d+ packages?/i.test(line) ||
+    /^up to date/i.test(line) ||
+    /^found 0 vulnerabilities/i.test(line) ||
+    /\bsuccess\b/i.test(low) ||
+    /^\s*(ok|done|ready|listening|started|online|connected)\b/i.test(low) ||
+    /(\u2713|\u2714)/.test(line)
+  ) return "#00e676";
+
+  // NPM INFO patterns (audited, installed, progress)  BLUE
+  if (
+    /^npm\s+(info|notice|http|verb|sill)\b/i.test(line) ||
+    /audited \d+ packages?/i.test(low) ||
+    /^installing\b/i.test(low) ||
+    /^resolving\b/i.test(low) ||
+    /^fetching\b/i.test(low) ||
+    /^\[info\]/i.test(line) ||
+    /^info:/i.test(line) ||
+    /\bhttp\/\d/i.test(low) ||
+    /^GET |^POST |^PUT |^DELETE /.test(line)
+  ) return "#4fc3f7";
+
+  // stderr default  soft red
+  if (stream === "stderr") return "#ff8080";
+
+  // default stdout  soft cyan-white
+  return "#c8e6ff";
+}
+
 type Server = {
   id: string;
   name: string;
@@ -480,7 +542,7 @@ export default function ServerControlPanel({ server, ownerUsername, nodeName, en
             ) : (
               logs.map((l, i) => (
                 <div key={i} style={{
-                  color: l.stream === "stderr" ? "#ff8080" : l.stream === "system" ? "#00c8ff" : "#c8e6ff",
+                  color: colorizeLog(l.data, l.stream),
                   fontFamily: "monospace",
                   fontSize: "13px",
                   whiteSpace: "pre-wrap",

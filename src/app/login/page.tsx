@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 export default function LoginPage() {
@@ -10,6 +10,13 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+
+  // Warm up migrate + bootstrap when the login page loads so the first
+  // real request isn't the trigger. Also gives us the actual DB error if
+  // something is misconfigured in prod (Railway/Vercel).
+  useEffect(() => {
+    fetch("/api/health").catch(() => {});
+  }, []);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -29,7 +36,7 @@ export default function LoginPage() {
         router.push("/dashboard");
         router.refresh();
       } else {
-        setError(data.error?.message || "Invalid credentials.");
+        setError(`[${data.error?.code || "ERR"}] ${data.error?.message || "Invalid credentials."}`);
       }
     } catch {
       setError("Connection error. Please try again.");
@@ -43,16 +50,23 @@ export default function LoginPage() {
       {/* Background elements */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div
-          className="absolute top-1/4 left-1/4 w-96 h-96 rounded-full opacity-5"
+          className="absolute top-1/4 left-1/4 w-[500px] h-[500px] rounded-full opacity-20"
           style={{
-            background: "radial-gradient(circle, #00c8ff, transparent)",
-            filter: "blur(60px)",
+            background: "radial-gradient(circle, #00d4ff, transparent 60%)",
+            filter: "blur(80px)",
           }}
         />
         <div
-          className="absolute bottom-1/4 right-1/4 w-96 h-96 rounded-full opacity-5"
+          className="absolute bottom-1/4 right-1/4 w-[500px] h-[500px] rounded-full opacity-20"
           style={{
-            background: "radial-gradient(circle, #0080ff, transparent)",
+            background: "radial-gradient(circle, #b04dff, transparent 60%)",
+            filter: "blur(80px)",
+          }}
+        />
+        <div
+          className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[300px] h-[300px] rounded-full opacity-15"
+          style={{
+            background: "radial-gradient(circle, #7c9bff, transparent 70%)",
             filter: "blur(60px)",
           }}
         />
@@ -65,25 +79,33 @@ export default function LoginPage() {
             <div
               className="w-16 h-16 rounded-2xl flex items-center justify-center relative"
               style={{
-                background: "linear-gradient(135deg, rgba(0,128,255,0.25), rgba(0,200,255,0.15))",
-                border: "1px solid rgba(0,200,255,0.4)",
-                boxShadow: "0 0 40px rgba(0,200,255,0.3), inset 0 0 20px rgba(0,200,255,0.1)",
+                background: "linear-gradient(135deg, rgba(0,212,255,0.2), rgba(176,77,255,0.2))",
+                border: "1px solid rgba(0,212,255,0.4)",
+                boxShadow: "0 0 40px rgba(0,212,255,0.3), 0 0 20px rgba(176,77,255,0.25), inset 0 0 20px rgba(0,212,255,0.1)",
                 backdropFilter: "blur(20px)",
               }}
             >
-              <svg width="36" height="36" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <svg width="40" height="40" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <defs>
                   <linearGradient id="bgrad" x1="0" y1="0" x2="1" y2="1">
-                    <stop offset="0%" stopColor="#00c8ff" stopOpacity="1" />
-                    <stop offset="100%" stopColor="#0080ff" stopOpacity="0.7" />
+                    <stop offset="0%" stopColor="#00d4ff" />
+                    <stop offset="50%" stopColor="#7c9bff" />
+                    <stop offset="100%" stopColor="#b04dff" />
                   </linearGradient>
+                  <filter id="bglow" x="-50%" y="-50%" width="200%" height="200%">
+                    <feGaussianBlur stdDeviation="1.5" result="blur" />
+                    <feMerge>
+                      <feMergeNode in="blur" />
+                      <feMergeNode in="SourceGraphic" />
+                    </feMerge>
+                  </filter>
                 </defs>
                 <path
                   d="M32 8c-8 0-14 5-15 12l-8 4c-1 1-1 3 1 3l7 0c-1 3-2 6-2 10 0 10 8 18 18 18 8 0 15-6 17-13 6-1 10-6 10-13 0-8-7-14-15-14-1 0-2 0-3 1-2-5-6-8-10-8z"
                   fill="url(#bgrad)"
+                  filter="url(#bglow)"
                 />
-                <circle cx="26" cy="26" r="2.2" fill="#050a14" />
-                <path d="M20 30 l-6 -1 l6 -2" fill="#00c8ff" opacity="0.7" />
+                <circle cx="26" cy="26" r="2.2" fill="#05010f" />
               </svg>
             </div>
           </div>
@@ -161,12 +183,19 @@ export default function LoginPage() {
               <div
                 className="rounded-lg p-3 text-sm"
                 style={{
-                  background: "rgba(255,82,82,0.1)",
-                  border: "1px solid rgba(255,82,82,0.3)",
-                  color: "#ff5252",
+                  background: "rgba(255,59,122,0.1)",
+                  border: "1px solid rgba(255,59,122,0.3)",
+                  color: "#ff3b7a",
                 }}
               >
-                [!] {error}
+                <div>[!] {error}</div>
+                {(error.includes("SERVER_ERROR") || error.includes("Login failed")) && (
+                  <div className="mt-2 pt-2 border-t text-xs" style={{ borderColor: "rgba(255,59,122,0.3)" }}>
+                    <a href="/api/debug" target="_blank" rel="noopener" className="underline" style={{ color: "#ff8ea3" }}>
+                      &rarr; Open /api/debug for full diagnostics
+                    </a>
+                  </div>
+                )}
               </div>
             )}
 

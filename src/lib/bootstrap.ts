@@ -12,14 +12,20 @@ import { users, nodes, ports } from "./../db/schema";
 import { eq, count } from "drizzle-orm";
 import { hashPassword } from "./auth";
 import { v4 as uuidv4 } from "uuid";
+import { ensureMigrated, withSchemaSafety } from "./migrate";
 
 type G = typeof globalThis & { __birdserverBootstrapped?: boolean; __birdserverBootstrapPromise?: Promise<void> };
 const g = globalThis as G;
 
 async function doBootstrap(): Promise<void> {
   try {
+    // 0. Make sure the schema is present (idempotent DDL)
+    await ensureMigrated();
+
     // 1. Admin
-    const [{ value: userCount }] = await db.select({ value: count() }).from(users);
+    const [{ value: userCount }] = await withSchemaSafety(() =>
+      db.select({ value: count() }).from(users)
+    );
     if (userCount === 0) {
       const passwordHash = await hashPassword("admin00");
       await db.insert(users).values({
@@ -98,17 +104,18 @@ async function doBootstrap(): Promise<void> {
 }
 
 export async function ensureBootstrapped(): Promise<void> {
-  if (!process.env.DATABASE_URL) {
-    throw new Error("DATABASE_URL is not configured.");
-  }
-
   if (g.__birdserverBootstrapped) return;
-
   if (!g.__birdserverBootstrapPromise) {
-    g.__birdserverBootstrapPromise = doBootstrap().then(() => {
-      g.__birdserverBootstrapped = true;
-    });
+    g.__birdserverBootstrapPromise = doBootstrap()
+      .then(() => { g.__birdserverBootstrapped = true; })
+      .catch((err) => {
+        console.error("[Bootstrap] failed:", err);
+        g.__birdserverBootstrapped = false;
+        g.__birdserverBootstrapPromise = undefined;
+        throw err;
+      });
   }
-
-  await g.__birdserverBootstrapPromise;
+  try {
+    await g.__birdserverBootstrapPromise;
+  } catch { /* retry next request */ }
 }
