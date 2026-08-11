@@ -5,7 +5,6 @@ import { sessions, users } from "@/db/schema";
 import { eq, and, gt } from "drizzle-orm";
 import { cookies } from "next/headers";
 import { v4 as uuidv4 } from "uuid";
-import { ensureMigrated } from "./migrate";
 
 export async function hashPassword(password: string): Promise<string> {
   return bcrypt.hash(password, 12);
@@ -19,7 +18,6 @@ export async function verifyPassword(
 }
 
 export async function createSession(userId: string, ipAddress?: string, userAgent?: string) {
-  await ensureMigrated();
   const sessionId = uuidv4();
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
 
@@ -35,40 +33,33 @@ export async function createSession(userId: string, ipAddress?: string, userAgen
 }
 
 export async function getSession() {
-  await ensureMigrated();
   const cookieStore = await cookies();
   const sessionId = cookieStore.get("birdserver_session")?.value;
 
   if (!sessionId) return null;
 
-  try {
-    const session = await db
-      .select()
-      .from(sessions)
-      .where(
-        and(
-          eq(sessions.id, sessionId),
-          gt(sessions.expiresAt, new Date())
-        )
+  const session = await db
+    .select()
+    .from(sessions)
+    .where(
+      and(
+        eq(sessions.id, sessionId),
+        gt(sessions.expiresAt, new Date())
       )
-      .limit(1);
+    )
+    .limit(1);
 
-    if (!session.length) return null;
+  if (!session.length) return null;
 
-    const user = await db
-      .select()
-      .from(users)
-      .where(eq(users.id, session[0].userId))
-      .limit(1);
+  const user = await db
+    .select()
+    .from(users)
+    .where(eq(users.id, session[0].userId))
+    .limit(1);
 
-    if (!user.length) return null;
+  if (!user.length) return null;
 
-    return { session: session[0], user: user[0] };
-  } catch (err) {
-    // Schema might be stale on cold start - swallow, next request retries
-    console.warn("[getSession] query failed:", (err as Error).message.split("\n")[0]);
-    return null;
-  }
+  return { session: session[0], user: user[0] };
 }
 
 export async function deleteSession(sessionId: string) {

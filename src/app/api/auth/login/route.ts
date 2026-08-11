@@ -4,18 +4,13 @@ import { users, auditLogs } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { verifyPassword, createSession } from "@/lib/auth";
 import { ensureBootstrapped } from "@/lib/bootstrap";
-import { ensureMigrated, withSchemaSafety } from "@/lib/migrate";
 import { cookies } from "next/headers";
 
 export async function POST(req: NextRequest) {
   try {
-    // Guarantee schema + admin user exist BEFORE any query
-    await ensureMigrated();
     await ensureBootstrapped();
-
-    const body = await req.json().catch(() => null);
-    const username = typeof body?.username === "string" ? body.username.trim() : "";
-    const password = typeof body?.password === "string" ? body.password : "";
+    const body = await req.json();
+    const { username, password } = body;
 
     if (!username || !password) {
       return NextResponse.json(
@@ -24,10 +19,11 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Wrap the query so if the schema is still stale we auto-migrate + retry
-    const userResult = await withSchemaSafety(() =>
-      db.select().from(users).where(eq(users.username, username)).limit(1)
-    );
+    const userResult = await db
+      .select()
+      .from(users)
+      .where(eq(users.username, username))
+      .limit(1);
 
     if (!userResult.length) {
       return NextResponse.json(
@@ -91,23 +87,9 @@ export async function POST(req: NextRequest) {
       },
     });
   } catch (err) {
-    // Never expose raw PostgreSQL/Drizzle SQL to the browser.
-    console.error("[Login] failed:", err);
-
-    const message = err instanceof Error ? err.message : "";
-    const databaseProblem =
-      /DATABASE_URL|postgres|database|relation|column|schema|connect|ECONNREFUSED|ENOTFOUND/i.test(message);
-
+    console.error("Login error:", err);
     return NextResponse.json(
-      {
-        success: false,
-        error: {
-          code: databaseProblem ? "DATABASE_NOT_READY" : "LOGIN_FAILED",
-          message: databaseProblem
-            ? "Database belum siap. Pastikan PostgreSQL Railway terhubung dan DATABASE_URL tersedia, lalu tunggu deployment selesai."
-            : "Login gagal karena kesalahan server. Silakan coba lagi.",
-        },
-      },
+      { success: false, error: { code: "SERVER_ERROR", message: "An internal error occurred." } },
       { status: 500 }
     );
   }

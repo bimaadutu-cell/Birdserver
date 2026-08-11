@@ -1,5 +1,3 @@
-export const dynamic = "force-dynamic";
-
 import { getSession } from "@/lib/auth";
 import { db } from "@/db";
 import { users, servers, nodes, apiKeys, auditLogs } from "@/db/schema";
